@@ -307,6 +307,13 @@ Call `tools_status` to see what is actually present.
 in `http.allowedHosts`; the Host check answers `403` to everything else. `curl /health` from a
 browser-free shell to confirm the server is alive.
 
+**`"x.x.x.x" is not an address on this device`.** Your VPN address changed — Android hands out a
+new one when the phone reconnects on a different cellular interface. The server lists its current
+addresses before it exits. Either update `http.bind` and `http.allowedHosts`, or pass the new
+address for one run with `--bind <addr> --port <port>`, or bind to a stable VPN hostname
+(Tailscale MagicDNS) which is the fix that survives the next reconnect. This is the most common
+thing to go stale on a phone; the stdio transport never has this problem.
+
 **Remote tools over HTTP are slow or flaky.** Put the phone and the client on the same VPN
 (Tailscale or WireGuard) and bind to that address instead of relying on a carrier network.
 
@@ -315,7 +322,7 @@ browser-free shell to confirm the server is alive.
 ```sh
 npm install --no-bin-links   # on shared storage
 node scripts/check.mjs       # syntax check and credential scan
-node test/smoke.mjs          # 34 tests: config, tools, policy, both transports
+node test/smoke.mjs          # 35 tests: config, tools, policy, both transports
 ```
 
 The smoke test runs entirely against a temporary directory, boots the server over stdio and over

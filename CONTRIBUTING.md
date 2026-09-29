@@ -20,7 +20,7 @@ files in `src/` directly. Keep it that way unless there is a strong reason.
 
 ```sh
 node scripts/check.mjs     # syntax check plus a credential scan
-node test/smoke.mjs        # 34 tests, no device required
+node test/smoke.mjs        # 35 tests, no device required
 ```
 
 CI runs both on every push, plus a live boot of the HTTP server that asserts a bad token gets a

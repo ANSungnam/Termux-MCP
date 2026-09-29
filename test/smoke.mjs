@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { spawn as nodeSpawn } from 'node:child_process';
 import { createServer as createNodeHttpServer, request as nodeHttpRequest } from 'node:http';
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
@@ -501,6 +502,56 @@ await test('the launcher prints help and rejects unknown flags', async () => {
     () => exec(process.execPath, [binPath, '--nonsense'], { env: process.env }),
     /unknown option/,
   );
+});
+
+await test('--bind and --port override the config, and a non-local bind is refused', async () => {
+  const { execFile } = await import('node:child_process');
+  const { promisify } = await import('node:util');
+  const exec = promisify(execFile);
+  const env = { ...process.env, TERMUX_MCP_CONFIG: path.join(tmpRoot, 'override.json') };
+  fs.writeFileSync(
+    env.TERMUX_MCP_CONFIG,
+    JSON.stringify({
+      http: { enabled: true, bind: '127.0.0.1', port: 1, path: '/mcp', allowedHosts: ['127.0.0.1'] },
+      tokens: [{ name: 't', token: 'a-token-long-enough', scopes: ['full'] }],
+    }),
+  );
+
+  await assert.rejects(
+    () => exec(process.execPath, [binPath, '--http', '--bind', '203.0.113.9', '--port', '8799'], { env }),
+    (error) => {
+      assert.match(error.stderr, /refusing to listen/);
+      assert.match(error.stderr, /not an address on this device/);
+      assert.doesNotMatch(error.stderr, /listening on http/, 'never claim to be listening');
+      return true;
+    },
+  );
+
+  const child = nodeSpawn(process.execPath, [binPath, '--http', '--port', '8742'], {
+    env: { ...env, TERMUX_MCP_BIND: '127.0.0.1' },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  try {
+    let banner = '';
+    await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error(`server never reported listening: ${banner}`)), 20000);
+      child.stderr.on('data', (chunk) => {
+        banner += chunk.toString();
+        if (banner.includes('listening on http://127.0.0.1:8742')) {
+          clearTimeout(timer);
+          resolve();
+        }
+      });
+      child.on('exit', (code) => {
+        clearTimeout(timer);
+        reject(new Error(`server exited early with ${code}: ${banner}`));
+      });
+    });
+    const health = await fetch('http://127.0.0.1:8742/health');
+    assert.equal(health.status, 200);
+  } finally {
+    child.kill('SIGTERM');
+  }
 });
 
 await test('express is only a dependency of the http path', () => {

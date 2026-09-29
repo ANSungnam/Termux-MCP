@@ -1,3 +1,6 @@
+import dns from 'node:dns/promises';
+import net from 'node:net';
+import { networkInterfaces } from 'node:os';
 import { createMcpHandler, OAuthError, OAuthErrorCode } from '@modelcontextprotocol/server';
 import { createMcpExpressApp, requireBearerAuth } from '@modelcontextprotocol/express';
 import { toNodeHandler } from '@modelcontextprotocol/node';
@@ -104,6 +107,64 @@ export function tokenFingerprint(token) {
   return crypto.createHash('sha256').update(token).digest('hex').slice(0, 12);
 }
 
+function localIPv4Addresses() {
+  const found = [];
+  for (const [name, entries] of Object.entries(networkInterfaces())) {
+    for (const entry of entries ?? []) {
+      if (entry.family === 'IPv4' && !entry.internal) found.push({ address: entry.address, name });
+    }
+  }
+  return found;
+}
+
+function bindHint() {
+  const found = localIPv4Addresses();
+  if (found.length === 0) return '  this device has no non-loopback IPv4 address right now.\n';
+  return `  addresses on this device right now: ${found.map((entry) => `${entry.address} (${entry.name})`).join(', ')}\n`;
+}
+
+const LOOPBACK_NAMES = new Set(['localhost', 'localhost.localdomain', 'ip6-localhost', 'ip6-loopback']);
+
+function isLoopbackHost(host) {
+  const bare = host.replace(/^\[|\]$/g, '');
+  if (bare === '::1' || bare === '0:0:0:0:0:0:0:1') return true;
+  if (net.isIPv4(bare) && bare.startsWith('127.')) return true;
+  return LOOPBACK_NAMES.has(bare.toLowerCase());
+}
+
+function isWildcardHost(host) {
+  return host === '0.0.0.0' || host === '::' || host === '0:0:0:0:0:0:0:0' || host === '*';
+}
+
+async function preflightBind(host) {
+  if (!host || isWildcardHost(host) || isLoopbackHost(host)) return null;
+
+  const local = localIPv4Addresses().map((entry) => entry.address);
+  if (local.includes(host)) return null;
+
+  if (net.isIP(host) === 0) {
+    let resolved;
+    try {
+      resolved = await dns.lookup(host, { verbatim: true });
+    } catch (error) {
+      return `"${host}" could not be resolved (${error.code ?? error.message}).`;
+    }
+    if (isLoopbackHost(resolved.address) || local.includes(resolved.address)) return null;
+    return (
+      `"${host}" resolves to ${resolved.address}, which is not an address on this device.\n` +
+      `  ${bindHint().trim()}\n` +
+      '  if it should route elsewhere, put a forwarder or reverse proxy in front of this server.'
+    );
+  }
+
+  return (
+    `"${host}" is not an address on this device.\n` +
+    `  ${bindHint().trim()}\n` +
+    '  a VPN address changes when the phone reconnects on another interface, so either update\n' +
+    '  http.bind and http.allowedHosts, or use a stable VPN hostname (MagicDNS) for both.'
+  );
+}
+
 function startHttp(config) {
   const app = createMcpExpressApp({
     host: config.http.bind,
@@ -152,8 +213,9 @@ function startHttp(config) {
   });
 
   server.on('error', (error) => {
+    const hint = error.code === 'EADDRNOTAVAIL' || error.code === 'EADDRINUSE' ? `\n  ${bindHint().trim()}\n` : '';
     process.stderr.write(
-      `termux-mcp: cannot listen on ${config.http.bind}:${config.http.port}: ${error.message}\n`,
+      `termux-mcp: cannot listen on ${config.http.bind}:${config.http.port}: ${error.message}${hint}\n`,
     );
     process.exitCode = 1;
   });
@@ -200,6 +262,15 @@ export async function main(argv) {
     requireConfigFile: options.mode === 'http',
   });
 
+  if (options.bind) {
+    config.http.bind = options.bind;
+    if (!config.http.allowedHosts.includes(options.bind)) {
+      config.http.allowedHosts.push(options.bind);
+    }
+  }
+  if (Number.isInteger(options.port) && options.port > 0) config.http.port = options.port;
+  if (options.httpPath) config.http.path = options.httpPath;
+
   if (options.mode === 'http') {
     if (!config.http.enabled) {
       process.stderr.write(
@@ -210,6 +281,12 @@ export async function main(argv) {
     }
     if (config.tokens.length === 0) {
       process.stderr.write('termux-mcp: no tokens configured, refusing to listen. Run --init first.\n');
+      process.exitCode = 1;
+      return;
+    }
+    const problem = await preflightBind(config.http.bind);
+    if (problem) {
+      process.stderr.write(`termux-mcp: refusing to listen on ${config.http.bind}: ${problem}\n`);
       process.exitCode = 1;
       return;
     }
