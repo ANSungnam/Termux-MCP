@@ -1,0 +1,52 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  check:
+    name: syntax and secret scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node scripts/check.mjs
+
+  test:
+    name: smoke test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --no-audit --no-fund
+      - name: Run the smoke test
+        run: node test/smoke.mjs
+      - name: Boot the server over http
+        run: |
+          node bin/termux-mcp.mjs --init --bind 127.0.0.1 --port 8737
+          node bin/termux-mcp.mjs --http &
+          sleep 3
+          curl -fsS http://127.0.0.1:8737/health
+          TOKEN=$(node -e "process.stdout.write(JSON.parse(require('fs').readFileSync(process.env.HOME + '/.termux-mcp/config.json','utf8')).tokens[0].token)")
+          curl -fsS -o /dev/null -w 'unauthenticated status: %{http_code}\n' \
+            -X POST http://127.0.0.1:8737/mcp \
+            -H 'content-type: application/json' \
+            -H 'accept: application/json, text/event-stream' \
+            -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
+          curl -fsS -o /dev/null -w 'authenticated status: %{http_code}\n' \
+            -X POST http://127.0.0.1:8737/mcp \
+            -H 'content-type: application/json' \
+            -H 'accept: application/json, text/event-stream' \
+            -H "authorization: Bearer $TOKEN" \
+            -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'

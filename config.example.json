@@ -1,0 +1,74 @@
+{
+  "http": {
+    "enabled": true,
+    "bind": "127.0.0.1",
+    "port": 8737,
+    "path": "/mcp",
+    "allowedHosts": ["127.0.0.1", "localhost"]
+  },
+  "tokens": [
+    {
+      "name": "laptop-full",
+      "token": "replace-with-a-long-random-string",
+      "scopes": ["full"]
+    },
+    {
+      "name": "laptop-read",
+      "token": "replace-with-another-long-random-string",
+      "scopes": ["read"]
+    }
+  ],
+  "paths": {
+    "allow": ["/data/data/com.termux/files/home", "/data/data/com.termux/files/usr", "/storage/emulated/0", "/tmp"],
+    "deny": [
+      { "path": "/system" },
+      { "path": "/vendor" },
+      { "path": "/sys" },
+      { "path": "/proc" },
+      { "path": "/dev" },
+      { "path": "/etc" },
+      { "path": "/data/data", "except": ["/data/data/com.termux/files"] },
+      { "path": "/data/user" },
+      { "path": "/data/app" },
+      { "path": "/storage/emulated/0/Android/data" },
+      { "path": "/storage/emulated/0/Android/obb" }
+    ],
+    "defaultRoot": "/data/data/com.termux/files/home"
+  },
+  "limits": {
+    "maxOutputBytes": 262144,
+    "maxReadBytes": 1048576,
+    "defaultTimeoutMs": 30000,
+    "maxTimeoutMs": 600000,
+    "maxConcurrentJobs": 8,
+    "maxLogBytes": 65536,
+    "maxSearchMatches": 200,
+    "maxListEntries": 1000
+  },
+  "shell": {
+    "defaultCwd": "~",
+    "defaultEnv": {},
+    "loginShell": true
+  },
+  "api": {
+    "deny": [
+      "termux-api-start",
+      "termux-api-stop",
+      "termux-setup-package-manager",
+      "termux-change-repo",
+      "termux-exec-ld-preload-lib",
+      "termux-exec-system-linker-exec",
+      "termux-reset",
+      "termux-chroot",
+      "termux-reboot",
+      "termux-saf-create",
+      "termux-saf-rm",
+      "termux-saf-mkdir",
+      "termux-saf-write",
+      "termux-saf-dirs"
+    ]
+  },
+  "features": {
+    "tmux": true
+  }
+}

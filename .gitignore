@@ -1,0 +1,27 @@
+# Dependencies
+node_modules/
+package-lock.json.bak
+
+# Secrets and machine-local state
+config.json
+.env
+.env.*
+!.env.example
+
+# Runtime artefacts
+.jobs/
+logs/
+*.log
+*.log.*
+audit.log*
+
+# Screenshots, photos and recordings captured through the api tools
+media/
+
+# Editors and OS noise
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*~
