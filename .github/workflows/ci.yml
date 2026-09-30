@@ -18,35 +18,108 @@ jobs:
       - run: node scripts/check.mjs
 
   test:
-    name: smoke test (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
+    name: smoke test (node ${{ matrix.node }})
+    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest]
+        node: [20, 22, 24]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - run: npm install --no-audit --no-fund
+      - run: node test/smoke.mjs
+
+  serve:
+    name: http transport
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
       - run: npm install --no-audit --no-fund
-      - name: Run the smoke test
-        run: node test/smoke.mjs
-      - name: Boot the server over http
+
+      - name: Boot the server and check authentication
         run: |
+          set -euo pipefail
+
           node bin/termux-mcp.mjs --init --bind 127.0.0.1 --port 8737
           node bin/termux-mcp.mjs --http &
-          sleep 3
-          curl -fsS http://127.0.0.1:8737/health
-          TOKEN=$(node -e "process.stdout.write(JSON.parse(require('fs').readFileSync(process.env.HOME + '/.termux-mcp/config.json','utf8')).tokens[0].token)")
-          curl -fsS -o /dev/null -w 'unauthenticated status: %{http_code}\n' \
-            -X POST http://127.0.0.1:8737/mcp \
-            -H 'content-type: application/json' \
-            -H 'accept: application/json, text/event-stream' \
-            -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
-          curl -fsS -o /dev/null -w 'authenticated status: %{http_code}\n' \
-            -X POST http://127.0.0.1:8737/mcp \
-            -H 'content-type: application/json' \
-            -H 'accept: application/json, text/event-stream' \
-            -H "authorization: Bearer $TOKEN" \
-            -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
+          SERVER_PID=$!
+          trap 'kill "$SERVER_PID" 2>/dev/null || true' EXIT
+
+          ready=0
+          for _ in $(seq 1 30); do
+            if curl -sS --max-time 2 http://127.0.0.1:8737/health >/dev/null 2>&1; then
+              ready=1
+              break
+            fi
+            sleep 1
+          done
+          if [ "$ready" -ne 1 ]; then
+            echo "the server never answered on /health"
+            exit 1
+          fi
+
+          health="$(curl -sS --max-time 5 http://127.0.0.1:8737/health)"
+          echo "health: $health"
+          case "$health" in
+            *'"ok":true'*) ;;
+            *) echo "health did not report ok"; exit 1 ;;
+          esac
+
+          TOKEN="$(node -e "process.stdout.write(JSON.parse(require('fs').readFileSync(process.env.HOME + '/.termux-mcp/config.json','utf8')).tokens[0].token)")"
+
+          # No -f here: a 401 is the behaviour under test, not a curl failure.
+          # Assert on the status code ourselves so a regression fails loudly.
+          post() {
+            local out="$1"; shift
+            curl -sS --max-time 10 -o "$out" -w '%{http_code}' \
+              -X POST http://127.0.0.1:8737/mcp \
+              -H 'content-type: application/json' \
+              -H 'accept: application/json, text/event-stream' \
+              "$@"
+          }
+
+          code="$(post unauth.json -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}')"
+          echo "unauthenticated tools/list: $code"
+          if [ "$code" != "401" ]; then
+            echo "expected 401 without a token, got $code"
+            cat unauth.json
+            exit 1
+          fi
+
+          code="$(post auth.json -H "authorization: Bearer $TOKEN" -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}')"
+          echo "authenticated tools/list: $code"
+          if [ "$code" != "200" ]; then
+            echo "expected 200 with a valid token, got $code"
+            cat auth.json
+            exit 1
+          fi
+
+          for tool in shell fs_read system_info battery_status; do
+            if ! grep -q "\"$tool\"" auth.json; then
+              echo "tools/list is missing $tool"
+              exit 1
+            fi
+          done
+          echo "http checks passed: 401 without a token, 200 with one, tools present"
+
+      - name: A bind address this device does not have is refused
+        run: |
+          set -euo pipefail
+          output="$(node bin/termux-mcp.mjs --http --bind 203.0.113.9 --port 8799 2>&1 || true)"
+          echo "$output"
+          case "$output" in
+            *"refusing to listen"*) ;;
+            *) echo "expected a refusal for a non-local bind address"; exit 1 ;;
+          esac
+          case "$output" in
+            *"listening on http"*)
+              echo "it claimed to be listening, which is wrong"
+              exit 1
+              ;;
+          esac
