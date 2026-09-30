@@ -22,6 +22,8 @@
   "files": [
     "bin",
     "src",
+    "scripts",
+    "install.sh",
     "config.example.json",
     "README.md",
     "LICENSE"
@@ -29,6 +31,7 @@
   "scripts": {
     "start": "node bin/termux-mcp.mjs --http",
     "start:stdio": "node bin/termux-mcp.mjs --stdio",
+    "setup": "bash scripts/setup.sh",
     "test": "node test/smoke.mjs",
     "check": "node scripts/check.mjs"
   },
