@@ -1,3 +1,6 @@
+# Local changelog, kept out of the published repository
+CHANGELOG.md
+
 # Dependencies
 node_modules/
 package-lock.json.bak
