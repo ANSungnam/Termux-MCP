@@ -19,6 +19,7 @@ import { createMcpExpressApp, requireBearerAuth } from '@modelcontextprotocol/ex
 import express from 'express';
 import { createServer } from '../src/server.js';
 import { buildInitialConfig, loadConfig, writeConfig } from '../src/config.js';
+import { hostHeaderGuard, originGuard } from '../src/hostguard.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(here, '..');
@@ -560,6 +561,90 @@ await test('express is only a dependency of the http path', () => {
   assert.equal(pkg.type, 'module');
   assert.equal(pkg.license, 'MIT');
   void express;
+});
+
+await test('a wildcard bind accepts private-network Hosts and nothing else', async () => {
+  const configPath = path.join(tmpRoot, 'hotspot.json');
+  const hotspotConfig = buildInitialConfig({ bind: '0.0.0.0', port: 0 });
+  hotspotConfig.http.allowedHosts = [
+    '127.0.0.1',
+    'localhost',
+    '192.168.0.0/16',
+    '10.0.0.0/8',
+    '172.16.0.0/12',
+    '100.64.0.0/10',
+  ];
+  writeConfig(hotspotConfig, { configPath });
+  const loaded = loadConfig({ configPath });
+  const token = loaded.tokens.find((entry) => entry.scopes.includes('full')).token;
+
+  assert.equal(
+    loaded.http.allowedHosts.some((entry) => entry === '0.0.0.0/0'),
+    false,
+    'a wildcard bind must not widen allowedHosts to the whole internet',
+  );
+
+  const handler = createMcpHandler((ctx) =>
+    createServer({ config: loaded, authInfo: ctx.authInfo, mode: 'http' }),
+  );
+  const nodeHandler = toNodeHandler(handler);
+  const originalWarn = console.warn;
+  console.warn = () => {};
+  let app;
+  try {
+    app = createMcpExpressApp({ host: '0.0.0.0', jsonLimit: '4mb' });
+  } finally {
+    console.warn = originalWarn;
+  }
+  app.use(hostHeaderGuard(loaded.http.allowedHosts));
+  app.use(originGuard(loaded.http.allowedHosts));
+  app.get('/health', (_req, res) => void res.json({ ok: true }));
+  app.all('/mcp', (req, res) => void nodeHandler(req, res, req.body));
+
+  const server = createNodeHttpServer(app);
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const { port } = server.address();
+
+  const requestWithHost = (host, extra = {}) =>
+    new Promise((resolve, reject) => {
+      const req = nodeHttpRequest(
+        { host: '127.0.0.1', port, path: '/health', method: 'GET', headers: { host, ...extra } },
+        (res) => {
+          res.resume();
+          resolve(res.statusCode);
+        },
+      );
+      req.on('error', reject);
+      req.end();
+    });
+
+  assert.equal(await requestWithHost('127.0.0.1:1234'), 200, 'loopback is fine');
+  assert.equal(await requestWithHost('192.168.43.1:8737'), 200, 'the phone hotspot gateway is fine');
+  assert.equal(await requestWithHost('192.168.43.77:8737'), 200, 'any host on the hotspot is fine');
+  assert.equal(await requestWithHost('10.1.2.3:8737'), 200, 'a private LAN address is fine');
+  assert.equal(await requestWithHost('100.120.34.134:8737'), 200, 'a CGNAT or VPN address is fine');
+  assert.equal(await requestWithHost('8.8.8.8:8737'), 403, 'the public internet is not');
+  assert.equal(await requestWithHost('172.32.0.1:8737'), 403, 'an address just outside 172.16/12 is not');
+  assert.equal(await requestWithHost('evil.example.com'), 403, 'a foreign hostname is not');
+  assert.equal(
+    await requestWithHost('127.0.0.1:1234', { origin: 'https://evil.example.com' }),
+    403,
+    'a cross-origin browser request is not',
+  );
+
+  const authorised = await fetch(`http://127.0.0.1:${port}/mcp`, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      accept: 'application/json, text/event-stream',
+      authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }),
+  });
+  assert.ok(authorised.status < 400, 'an authorised request inside the policy still works');
+
+  await handler.close();
+  await new Promise((resolve) => server.close(resolve));
 });
 
 fs.rmSync(tmpRoot, { recursive: true, force: true });

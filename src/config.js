@@ -27,7 +27,16 @@ export const defaults = Object.freeze({
     bind: '127.0.0.1',
     port: 8737,
     path: '/mcp',
-    allowedHosts: ['127.0.0.1', 'localhost'],
+    allowedHosts: [
+      '127.0.0.1',
+      'localhost',
+      '::1',
+      '[::1]',
+      '192.168.0.0/16',
+      '10.0.0.0/8',
+      '172.16.0.0/12',
+      '100.64.0.0/10',
+    ],
   },
   tokens: [],
   paths: {
@@ -84,6 +93,10 @@ function clone(value) {
   return JSON.parse(JSON.stringify(value));
 }
 
+function isWildcardAddress(address) {
+  return address === '0.0.0.0' || address === '::' || address === '0:0:0:0:0:0:0:0' || address === '*';
+}
+
 function merge(base, override) {
   if (override === undefined || override === null) return base;
   if (Array.isArray(base) || Array.isArray(override)) return override;
@@ -137,6 +150,11 @@ export function validate(config) {
   if (config.http.allowedHosts.length === 0) {
     throw new Error('config.http.allowedHosts must list at least one Host the server answers to');
   }
+  for (const entry of config.http.allowedHosts) {
+    if (typeof entry !== 'string' || entry.trim() === '') {
+      throw new Error(`config.http.allowedHosts contains an invalid entry: ${JSON.stringify(entry)}`);
+    }
+  }
   if (config.limits.maxOutputBytes < 1024) {
     throw new Error('config.limits.maxOutputBytes must be at least 1024');
   }
@@ -177,7 +195,9 @@ export function buildInitialConfig({ bind, port, httpPath } = {}) {
   const config = clone(defaults);
   if (bind) {
     config.http.bind = bind;
-    config.http.allowedHosts = [bind, '127.0.0.1', 'localhost'];
+    if (!isWildcardAddress(bind) && !config.http.allowedHosts.includes(bind)) {
+      config.http.allowedHosts = [bind, ...config.http.allowedHosts];
+    }
   }
   if (port) config.http.port = port;
   if (httpPath) config.http.path = httpPath;

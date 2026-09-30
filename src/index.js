@@ -10,6 +10,7 @@ import { pathToFileURL } from 'node:url';
 import { loadConfig } from './config.js';
 import { audit } from './audit.js';
 import { createServer, SERVER_NAME } from './server.js';
+import { classifyAllowedHosts, describePolicy, hostHeaderGuard, originGuard } from './hostguard.js';
 import { ensureStateDirs, isTermux, termuxPrefix } from './paths.js';
 
 const VERSION = '0.1.0';
@@ -117,6 +118,19 @@ function localIPv4Addresses() {
   return found;
 }
 
+function globalIPv6Addresses() {
+  const found = [];
+  for (const [name, entries] of Object.entries(networkInterfaces())) {
+    for (const entry of entries ?? []) {
+      if (entry.family !== 'IPv6' || entry.internal) continue;
+      const address = entry.address.toLowerCase();
+      if (address.startsWith('fe80') || address.startsWith('::')) continue;
+      found.push(`${entry.address} (${name})`);
+    }
+  }
+  return found;
+}
+
 function bindHint() {
   const found = localIPv4Addresses();
   if (found.length === 0) return '  this device has no non-loopback IPv4 address right now.\n';
@@ -165,13 +179,37 @@ async function preflightBind(host) {
   );
 }
 
+const SDK_REBINDING_WARNING = 'without DNS rebinding protection';
+
+function createGuardedApp(host, allowedHosts) {
+  const original = console.warn;
+  console.warn = (...args) => {
+    if (String(args[0] ?? '').includes(SDK_REBINDING_WARNING)) return;
+    original(...args);
+  };
+  try {
+    return createMcpExpressApp({ host, jsonLimit: '16mb' });
+  } finally {
+    console.warn = original;
+  }
+}
+
 function startHttp(config) {
-  const app = createMcpExpressApp({
-    host: config.http.bind,
-    allowedHosts: config.http.allowedHosts,
-    allowedOrigins: config.http.allowedHosts,
-    jsonLimit: '16mb',
-  });
+  const policy = classifyAllowedHosts(config.http.allowedHosts);
+  const addresses = localIPv4Addresses().map((entry) => entry.address);
+  const app = policy.needsCustomGuard
+    ? createGuardedApp(config.http.bind)
+    : createMcpExpressApp({
+        host: config.http.bind,
+        allowedHosts: config.http.allowedHosts,
+        allowedOrigins: config.http.allowedHosts,
+        jsonLimit: '16mb',
+      });
+
+  if (policy.needsCustomGuard) {
+    app.use(hostHeaderGuard(config.http.allowedHosts));
+    app.use(originGuard(config.http.allowedHosts));
+  }
 
   const handler = createMcpHandler((ctx) =>
     createServer({ config, authInfo: ctx.authInfo, mode: 'http', version: VERSION }),
@@ -201,15 +239,37 @@ function startHttp(config) {
     const tokenSummary = config.tokens
       .map((entry) => `${entry.name}[${entry.scopes.join('|')}]:${tokenFingerprint(entry.token)}`)
       .join(' ');
+    const reachable = isWildcardHost(config.http.bind) ? addresses : [config.http.bind];
+
     process.stderr.write(
       `termux-mcp ${VERSION} listening on http://${config.http.bind}:${port}${config.http.path}\n` +
         `  health: http://${config.http.bind}:${port}/health\n` +
         `  tokens: ${tokenSummary || 'none'}\n` +
+        `  accepts Host: ${describePolicy(config.http.allowedHosts, reachable)}\n` +
         (isTermux
           ? `  termux: yes (${termuxPrefix})\n`
           : '  termux: not detected, termux-api tools will report as unavailable\n'),
     );
-    audit({ action: 'http_listen', bind: config.http.bind, port, path: config.http.path });
+
+    if (isWildcardHost(config.http.bind)) {
+      const globalIPv6 = globalIPv6Addresses();
+      process.stderr.write(
+        `  note: bound to every interface. Anything that can route to this device may reach it.\n` +
+          `  clients on this device can connect at: ${reachable.map((entry) => entry || '(none)').join(', ') || 'no address yet'}\n` +
+          (globalIPv6.length > 0
+            ? `  warning: this device also has a globally routable IPv6 address (${globalIPv6.join(', ')}).\n` +
+              '    this listener is IPv4 only, so it is not exposed on IPv6, but be aware of it.\n'
+            : ''),
+      );
+    }
+
+    audit({
+      action: 'http_listen',
+      bind: config.http.bind,
+      port,
+      path: config.http.path,
+      allowedHosts: config.http.allowedHosts,
+    });
   });
 
   server.on('error', (error) => {

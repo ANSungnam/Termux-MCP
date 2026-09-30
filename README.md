@@ -66,24 +66,57 @@ You can also copy the directory into `$HOME` and install normally.
 
 ## Quick start
 
+The one-liner. It installs dependencies, writes a config with two tokens, starts the server and
+prints what to type on your PC:
+
+```sh
+bash scripts/setup.sh
+```
+
+Useful flags: `--bind 0.0.0.0` (the default, so a PC on the hotspot can reach the phone),
+`--port 8737`, `--with-tmux`, `--with-api`, `--with-opencode`, `--no-http`, `--force` to rotate
+tokens. It is idempotent, and it will not touch an existing config unless you pass `--force`.
+
+Doing it by hand instead:
+
 ```sh
 # 1. Create a config with two freshly generated tokens
-node bin/termux-mcp.mjs --init
+node bin/termux-mcp.mjs --init --bind 0.0.0.0 --port 8737
 
 # 2a. Serve on stdio for a client on this device
 node bin/termux-mcp.mjs --stdio
 
 # 2b. Or serve on HTTP for a client somewhere else
-node bin/termux-mcp.mjs --http --bind 100.64.0.1 --port 8737
+node bin/termux-mcp.mjs --http --bind 0.0.0.0 --port 8737
 ```
 
 `--init` prints your tokens once. They are written to `~/.termux-mcp/config.json` with mode
 `600`. Keep that file out of version control — it is the only thing between a client and your
 phone.
 
-The default bind address is `127.0.0.1`. Set `--bind` (or `TERMUX_MCP_BIND`) to a Tailscale,
-WireGuard or LAN address to reach the phone from another machine, and add that address to
-`http.allowedHosts` so the Host header check lets it through.
+### Reaching the phone from a PC over the hotspot
+
+`0.0.0.0` makes the server listen on every interface, so a laptop joined to the phone's hotspot
+can connect. Two things make that safe enough to be convenient:
+
+- **Bearer tokens.** Every request needs one. The read token is enough for browsing.
+- **A private-network Host allowlist.** `http.allowedHosts` defaults to loopback plus
+  `192.168.0.0/16`, `10.0.0.0/8`, `172.16.0.0/12` and `100.64.0.0/10` — a Wi-Fi network, the
+  phone's own hotspot, or a VPN. It is deliberately **not** `0.0.0.0/0`, so a public client
+  cannot forge a Host header and get in, and the DNS-rebinding guard stays armed.
+
+Turn the hotspot on, then on the PC use the address the server printed at startup:
+
+```sh
+curl http://192.168.43.1:8737/health
+```
+
+The Android hotspot gateway is normally `192.168.43.1`, but read the banner rather than assume
+it. The listener is IPv4 only, so a globally routable IPv6 address on the phone is not exposed —
+the server says so at startup if it finds one.
+
+If you would rather not expose a port at all, use the SSH recipe below. It is strictly better;
+the hotspot route is the convenient one.
 
 ## Client setup
 
@@ -253,10 +286,10 @@ profiles.
 | Key | Default | Notes |
 |---|---|---|
 | `http.enabled` | `true` | Set `false` to keep the file around but serve nothing. |
-| `http.bind` | `127.0.0.1` | Use a VPN or LAN address, never `0.0.0.0` on an untrusted network. |
+| `http.bind` | `127.0.0.1` | `0.0.0.0` listens everywhere, which is what a PC on the hotspot needs. |
 | `http.port` | `8737` | |
 | `http.path` | `/mcp` | |
-| `http.allowedHosts` | `["127.0.0.1","localhost"]` | Hostnames the server answers to. |
+| `http.allowedHosts` | loopback + `192.168.0.0/16`, `10.0.0.0/8`, `172.16.0.0/12`, `100.64.0.0/10` | Exact hosts, CIDR ranges, or `*` to accept anything. CIDR entries switch the guard from exact matching to range matching. |
 | `tokens[]` | none | `{ name, token, scopes }` where scopes is `read` or `full`. |
 | `paths.allow` | Termux home, `$PREFIX`, `/storage/emulated/0`, `/tmp` | File API roots. |
 | `paths.deny` | system, vendor, proc, dev, etc, other apps' data | Supports `{ path, except: [] }`. |
@@ -307,12 +340,16 @@ Call `tools_status` to see what is actually present.
 in `http.allowedHosts`; the Host check answers `403` to everything else. `curl /health` from a
 browser-free shell to confirm the server is alive.
 
+**A PC on the hotspot gets `403`.** The Host header carries the address the client dialled, so it
+must fall inside `http.allowedHosts`. The default private ranges cover a normal hotspot; if you
+are bridging into some other subnet, add it, or add the exact address. Note that `allowedHosts`
+is the *client's* view of the address, not the server's.
+
 **`"x.x.x.x" is not an address on this device`.** Your VPN address changed — Android hands out a
 new one when the phone reconnects on a different cellular interface. The server lists its current
 addresses before it exits. Either update `http.bind` and `http.allowedHosts`, or pass the new
-address for one run with `--bind <addr> --port <port>`, or bind to a stable VPN hostname
-(Tailscale MagicDNS) which is the fix that survives the next reconnect. This is the most common
-thing to go stale on a phone; the stdio transport never has this problem.
+address for one run with `--bind <addr> --port <port>`, or bind to `0.0.0.0` with the private-range
+allowlist and stop caring. The stdio transport never has this problem.
 
 **Remote tools over HTTP are slow or flaky.** Put the phone and the client on the same VPN
 (Tailscale or WireGuard) and bind to that address instead of relying on a carrier network.
@@ -322,13 +359,13 @@ thing to go stale on a phone; the stdio transport never has this problem.
 ```sh
 npm install --no-bin-links   # on shared storage
 node scripts/check.mjs       # syntax check and credential scan
-node test/smoke.mjs          # 35 tests: config, tools, policy, both transports
+node test/smoke.mjs          # 36 tests: config, tools, policy, both transports
 ```
 
 The smoke test runs entirely against a temporary directory, boots the server over stdio and over
-HTTP, and asserts that a bad token gets a `401`, a bad Host gets a `403`, a read token cannot
-write, and a destructive command without `confirm` is refused. It needs no Android device, which
-is why CI can run it on Linux.
+HTTP, and asserts that a bad token gets a `401`, a bad Host gets a `403`, a private-network Host
+is accepted while a public one is not, a read token cannot write, and a destructive command
+without `confirm` is refused. It needs no Android device, which is why CI can run it on Linux.
 
 Add a tool in `src/tools/`, give it a schema, set `annotations.readOnlyHint` correctly — the
 scope gate reads that flag — and register it in the matching `register*Tools` function.

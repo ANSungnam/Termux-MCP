@@ -32,7 +32,8 @@ an SSH server with password auth, not like a web app.
 | Protected files | The audit log and the config file cannot be written or deleted through any tool, so an agent cannot erase its own trail or escalate by rewriting the policy. |
 | Token scopes | `read` reaches read-only tools; `full` reaches everything. The split is derived from each tool's `readOnlyHint` annotation, so it cannot drift from the tool list. |
 | Constant-time token compare | Bearer tokens are compared as SHA-256 digests with `crypto.timingSafeEqual`. |
-| Host and Origin validation | Requests whose `Host` is not in `http.allowedHosts` get `403`, which blunts DNS-rebinding attacks against a locally bound server. |
+| Host and Origin validation | Requests whose `Host` is not in `http.allowedHosts` get `403`, which blunts DNS-rebinding attacks against a locally bound server. Entries may be exact hosts, IPv4 CIDR ranges, or `*`. |
+| IPv4-only listener | `bind: 0.0.0.0` creates an IPv4 socket only, so a globally routable IPv6 address on the phone is not exposed by a wildcard bind. The server reports at startup if it finds one. |
 | Path traversal | `..` segments are resolved before the allow/deny check, so traversal cannot escape the jail. |
 | Output caps | Per-command output, file reads, search matches, listing depth and concurrent jobs are all capped, so a runaway command cannot exhaust memory or the disk. |
 | Timeout containment | Timed-out commands have their entire process group signalled, not just the direct child. |
@@ -49,21 +50,30 @@ an SSH server with password auth, not like a web app.
 
 ## Hardening checklist
 
-1. **Bind to a VPN address**, never `0.0.0.0`. Tailscale and WireGuard are the easy answers.
-2. **Set `http.allowedHosts`** to the exact address clients use. A wildcard defeats the check.
-3. **Keep `config.json` at `600`**, inside Termux's private directory, never in a git repo.
-4. **Use the `read` token** for any client that only browses. Reserve `full` for deliberate
+1. **Prefer `127.0.0.1` or an SSH tunnel when you can.** `0.0.0.0` is for the convenience case —
+   a laptop on the phone's own hotspot — and it means anything on that network can reach the port.
+   With SSH nothing is exposed at all.
+2. **If you bind `0.0.0.0`, keep the private-range allowlist.** The default
+   `192.168.0.0/16, 10.0.0.0/8, 172.16.0.0/12, 100.64.0.0/10` plus loopback is deliberate. Never
+   put `0.0.0.0/0` or `*` in `allowedHosts` on a network you do not control: that turns off the
+   DNS-rebinding guard entirely, and bearer tokens become the only thing standing between a
+   browser on your LAN and a shell on your phone.
+3. **Rotate the tokens after any hotspot use** if you are not sure who joined. `node
+   bin/termux-mcp.mjs --init --force` and check `audit_tail` for the session.
+4. **Set `http.allowedHosts`** to the exact address clients use, or the ranges they use. A
+   wildcard defeats the check.
+5. **Keep `config.json` at `600`**, inside Termux's private directory, never in a git repo. Note
+   that `/storage` is world-readable to other apps on many devices, so do not keep the config
+   there.
+6. **Use the `read` token** for any client that only browses. Reserve `full` for deliberate
    interactive sessions.
-5. **Rotate tokens** with `node bin/termux-mcp.mjs --init` and update the clients. Old tokens
-   stop working immediately because the file is the only source of truth.
-6. **Review the audit log** after granting access to a new agent: `audit_tail`, or
+7. **Review the audit log** after granting access to a new agent: `audit_tail`, or
    `tail -f ~/.termux-mcp/audit.log`.
-7. **Prune the `read` scope** if a client does not need `contact_list`, `call_log`, `sms_list`,
+8. **Prune the `read` scope** if a client does not need `contact_list`, `call_log`, `sms_list`,
    `camera_photo` or `mic_record`. Delete those tools from `src/tools/api.js` or deny them in
    `api.deny` if you never want them reachable.
-8. **Revoke Termux:API permissions** you do not need. The server cannot escalate past them, so
+9. **Revoke Termux:API permissions** you do not need. The server cannot escalate past them, so
    tightening Android settings is the strongest control you have.
-9. **Prefer SSH.** An SSH tunnel exposes nothing to the network and inherits SSH's own auth.
 
 ## Reporting a vulnerability
 
