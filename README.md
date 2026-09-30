@@ -22,34 +22,50 @@ take a screenshot or send yourself a notification — and it happens on the phon
 
 ---
 
-## Requirements
-
-| | |
-|---|---|
-| Device | Android with [Termux](https://ftermux.com) installed |
-| Node | 20 or newer in Termux (`pkg install nodejs`) |
-| For termux-api tools | `pkg install termux-api` **and** the [Termux:API](https://github.com/termux/termux-api) app |
-| For tmux tools | `pkg install tmux` |
-
-The server itself is pure JavaScript. There is nothing to compile.
-
 ## Install
+
+One command. It installs the project, writes a config, starts the server and tells you what to
+type on your PC:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/YSCodex/termux-mcp/main/install.sh | bash
+```
+
+Add flags after `bash -s --`:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/YSCodex/termux-mcp/main/install.sh \
+  | bash -s -- --with-tmux --with-api --with-opencode
+```
+
+The installer checks for Termux, `git`, `node` and `curl` — and installs them with `pkg` if they
+are missing — then clones to `~/termux-mcp` and runs `scripts/setup.sh`. It is safe to run twice:
+it updates an existing checkout, leaves a dirty one alone, and never rotates your tokens unless
+you pass `--force`. `--dir`, `--ref` and `--source` change the location, version or origin.
+
+To do it by hand instead:
 
 ```sh
 git clone https://github.com/YSCodex/termux-mcp.git
 cd termux-mcp
-npm install
+bash scripts/setup.sh          # or: npm install && node bin/termux-mcp.mjs --init
 ```
 
-If you install into shared storage (`/storage/emulated/0`, `/sdcard`) — which is what
-`termux-setup-storage` exposes — you must add `--no-bin-links`, because Android's FUSE
-filesystem cannot create the symlinks npm wants in `node_modules/.bin`:
+If you put the checkout on shared storage (`/storage/emulated/0`, `/sdcard` — which
+`termux-setup-storage` exposes) you must add `--no-bin-links`, because Android's FUSE filesystem
+cannot create the symlinks npm wants in `node_modules/.bin`. The installer and the setup script
+both detect this and do it for you.
 
-```sh
-npm install --no-bin-links
-```
+### Requirements
 
-You can also copy the directory into `$HOME` and install normally.
+| | |
+|---|---|
+| Device | Android with [Termux](https://ftermux.com) installed |
+| Node | 20 or newer (`pkg install nodejs`) — installed by the installer if absent |
+| For termux-api tools | `pkg install termux-api` **and** the [Termux:API](https://github.com/termux/termux-api) app |
+| For tmux tools | `pkg install tmux` |
+
+The server itself is pure JavaScript. There is nothing to compile.
 
 ### Two Android quirks worth knowing
 
