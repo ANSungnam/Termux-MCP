@@ -28,6 +28,7 @@ export const defaults = Object.freeze({
     port: 8737,
     path: '/mcp',
     allowedHosts: [
+      '***.ts.net',
       '127.0.0.1',
       'localhost',
       '::1',
