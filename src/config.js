@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { homeDir, isTermux, stateDir, defaultConfigPath, termuxPrefix, auditLogPath } from './paths.js';
+import { homeDir, isTermux, stateDir, defaultConfigPath, termuxPrefix, termuxRealHome, auditLogPath } from './paths.js';
 
 const API_DENY = new Set([
   'termux-api-start',
@@ -43,6 +43,7 @@ export const defaults = Object.freeze({
   paths: {
     allow: [
       homeDir,
+      ...(termuxRealHome ? [termuxRealHome] : []),
       termuxPrefix,
       '/storage/emulated/0',
       '/sdcard',
@@ -57,7 +58,7 @@ export const defaults = Object.freeze({
       { path: '/proc' },
       { path: '/dev' },
       { path: '/etc' },
-      { path: '/data/data', except: [termuxPrefix] },
+      { path: '/data/data', except: [termuxPrefix, ...(termuxRealHome ? [termuxRealHome] : [])] },
       { path: '/data/user' },
       { path: '/data/app' },
       { path: '/storage/emulated/0/Android/data' },
