@@ -3,6 +3,7 @@ import { audit } from './audit.js';
 import { describeError, errorResult } from './result.js';
 import { registerApiTools } from './tools/api.js';
 import { registerFsTools } from './tools/fs.js';
+import { registerPhoneTools } from './tools/phone.js';
 import { registerShellTools } from './tools/shell.js';
 import { registerSystemTools } from './tools/system.js';
 
@@ -16,6 +17,9 @@ Grouping:
 - battery_status, clipboard_*, location, screenshot, camera_photo, mic_record, notification, dialog,
   share, sms_*, tts_speak, wifi_* and api_run drive the Android APIs through termux-api.
 - system_info, proc_*, pkg_*, storage_info, network_info, audit_tail report device state.
+- phone_* drive the screen through the Sunny Phone Control app (accessibility): phone_get_screen_state
+  reads any app's UI, phone_tap/phone_click_node/phone_type_* act on it, phone_notification_* handle
+  notifications, phone_open_app/phone_send_intent launch apps. phone_status checks the app.
 
 Safety rules that apply to you:
 - Commands and tools marked destructive refuse to run unless you pass confirm: true. Only add
@@ -88,6 +92,7 @@ export function createServer(ctx) {
   registerShellTools(register);
   registerFsTools(register);
   registerSystemTools(register);
+  registerPhoneTools(register);
 
   return server;
 }

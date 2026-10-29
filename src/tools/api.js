@@ -3,7 +3,8 @@ import path from 'node:path';
 import * as z from 'zod/v4';
 import { run } from '../exec.js';
 import { assertCommandAllowed, assertPath } from '../policy.js';
-import { mediaDir, termuxBinary } from '../paths.js';
+import { isTermux, mediaDir, termuxBinary } from '../paths.js';
+import { callPhoneTool } from './phone.js';
 import { describeError, errorResult, imageResult, json, text } from '../result.js';
 
 const DEFAULT_TIMEOUT_MS = 15000;
@@ -309,12 +310,25 @@ export function registerApiTools(register) {
       title: 'Take a screenshot',
       description:
         'Capture the screen to a PNG in the server media directory. Set include_image to get the picture inline. ' +
-        'Needs the termux-api package; on some devices termux-screenshot is not available.',
+        'Uses termux-screenshot when present, otherwise the Sunny Phone Control app (low-resolution JPEG).',
       annotations: { readOnlyHint: true, openWorldHint: false },
       inputSchema: z.object({ include_image: z.boolean().optional() }),
     },
     async (args, { config }) => {
       try {
+        if (isTermux && !termuxBinary('termux-screenshot')) {
+          // termux-api ships no termux-screenshot on most devices; capture through Sunny Phone Control
+          // (accessibility screenshot) instead and keep this tool's contract: a file in the media dir.
+          const shot = await callPhoneTool('get_screen_state', { include_screenshot: true, annotate: false });
+          const image = shot.content?.find((block) => block.type === 'image');
+          if (shot.isError || !image) {
+            const why = shot.content?.map((block) => block.text).filter(Boolean).join(' ') || 'no image returned';
+            return errorResult(`termux-screenshot is not installed and the Sunny Phone Control fallback failed: ${why}`);
+          }
+          const jpg = nextMediaPath('screenshot', 'jpg');
+          fs.writeFileSync(jpg, Buffer.from(image.data, 'base64'), { mode: 0o600 });
+          return deliverMedia(jpg, { includeImage: args.include_image === true, config });
+        }
         const target = nextMediaPath('screenshot', 'png');
         const result = await apiCommand('termux-screenshot', ['-o', target], { config, timeoutMs: 20000 });
         if (result.exitCode !== 0) return apiResult(result, { raw: true });

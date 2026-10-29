@@ -12,6 +12,7 @@ import { audit } from './audit.js';
 import { createServer, SERVER_NAME } from './server.js';
 import { classifyAllowedHosts, describePolicy, hostHeaderGuard, originGuard } from './hostguard.js';
 import { ensureStateDirs, isTermux, termuxPrefix } from './paths.js';
+import { startPhoneToolSync } from './tools/phone.js';
 
 const VERSION = '0.1.0';
 
@@ -334,6 +335,8 @@ export async function main(argv) {
   }
   if (Number.isInteger(options.port) && options.port > 0) config.http.port = options.port;
   if (options.httpPath) config.http.path = options.httpPath;
+
+  if (process.env.SPC_DISABLE !== '1') startPhoneToolSync();
 
   if (options.mode === 'http') {
     if (!config.http.enabled) {
