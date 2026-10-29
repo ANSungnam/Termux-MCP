@@ -14,7 +14,7 @@ const INSTRUCTIONS = `Control the Android device this Termux install is running 
 Grouping:
 - shell, shell_bg, shell_jobs, shell_logs, shell_kill run commands in the Termux shell.
 - fs_* read and write files, but only inside the configured allowed roots.
-- battery_status, clipboard_*, location, screenshot, camera_photo, mic_record, notification, dialog,
+- battery_status, location, screenshot, camera_photo, mic_record, notification, dialog,
   share, sms_*, tts_speak, wifi_* and api_run drive the Android APIs through termux-api.
 - system_info, proc_*, pkg_*, storage_info, network_info, audit_tail report device state.
 - phone_* drive the screen through the Sunny Phone Control app (accessibility): phone_get_screen_state
@@ -32,6 +32,8 @@ Grouping:
 - 글자 입력: phone_type_append_text(칸 지정) → 검색은 phone_press_key(ENTER).
 - 설정 화면 등은 shell의 am start보다 phone_send_intent가 확실하다(Termux는 백그라운드에서 화면을 못 띄울 때가 있다).
 - 잠금 화면이면 조작하지 말고 사용자에게 잠금 해제를 부탁한다. Termux·Sunny Phone Control 알림은 지우지 않는다.
+- 클립보드는 phone_get_clipboard(읽기) / phone_set_clipboard(쓰기)만 쓴다. Termux 클립보드 도구는 없다
+  (안드로이드가 뒤에서 도는 Termux의 클립보드 읽기를 막아 빈 값만 나왔기 때문에 2026-10-30 제거).
 - 같은 도구를 불필요하게 반복 호출하지 않는다.
 
 Safety rules that apply to you:

@@ -253,7 +253,7 @@ straight to disk.
 ### Termux and Android
 
 `api_run` for any installed `termux-*` helper, plus first-class tools: `battery_status`,
-`clipboard_get`, `clipboard_set`, `toast`, `vibrate`, `wifi_info`, `wifi_scan`, `location`,
+`toast`, `vibrate`, `wifi_info`, `wifi_scan`, `location`,
 `screenshot`, `camera_photo`, `mic_record`, `notification`, `dialog`, `open_url`, `share`,
 `sensor_list`, `sensor_read`, `telephony_info`, `call_log`, `contact_list`, `sms_list`,
 `sms_send`, `tts_speak`, `media_list`.

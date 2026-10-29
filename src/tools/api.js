@@ -119,6 +119,12 @@ export function registerApiTools(register) {
             `refused: ${args.binary} is on this server's denylist. Use a dedicated tool, or edit config.api.deny.`,
           );
         }
+        if (/^termux-clipboard-(get|set)$/.test(args.binary)) {
+          return errorResult(
+            'refused: Termux 클립보드는 쓰지 않는다(안드로이드가 뒤에서 읽기를 막아 빈 값). ' +
+              '읽기는 phone_get_clipboard, 쓰기는 phone_set_clipboard를 쓴다.',
+          );
+        }
         assertCommandAllowed([args.binary, ...(args.args ?? [])], args.confirm === true);
         const result = await apiCommand(args.binary, args.args, {
           config,
@@ -148,42 +154,9 @@ export function registerApiTools(register) {
     },
   );
 
-  register(
-    'clipboard_get',
-    {
-      title: 'Read the clipboard',
-      description: 'Return the current Android clipboard text.',
-      annotations: { readOnlyHint: true, openWorldHint: true },
-      inputSchema: z.object({}),
-    },
-    async (_args, { config }) => {
-      try {
-        return text((await apiCommand('termux-clipboard-get', [], { config })).stdout);
-      } catch (error) {
-        return errorResult(describeError(error));
-      }
-    },
-  );
-
-  register(
-    'clipboard_set',
-    {
-      title: 'Write the clipboard',
-      description: 'Put text on the Android clipboard so it can be pasted into any app.',
-      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
-      inputSchema: z.object({ text: z.string() }),
-    },
-    async (args, { config }) => {
-      try {
-        const result = await apiCommand('termux-clipboard-set', [args.text], { config });
-        return result.exitCode === 0
-          ? json({ set: true, length: args.text.length })
-          : apiResult(result, { raw: true });
-      } catch (error) {
-        return errorResult(describeError(error));
-      }
-    },
-  );
+  // 2026-10-30: clipboard_get / clipboard_set 제거.
+  // 안드로이드 10+는 뒤에서 도는 Termux의 클립보드 읽기를 막아 빈 값만 돌려줬다(실측: 빈 값, 0.8~1.3초).
+  // 클립보드는 Sunny Phone Control의 phone_get_clipboard / phone_set_clipboard만 쓴다(실측: 정상, 약 0.1초).
 
   register(
     'toast',
