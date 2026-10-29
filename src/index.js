@@ -189,7 +189,12 @@ function createGuardedApp(host, allowedHosts) {
     original(...args);
   };
   try {
-    return createMcpExpressApp({ host, jsonLimit: '16mb' });
+    // The SDK picks its own Host check from `host`: for a loopback host it installs a localhost-only
+    // check, which would reject every allowed non-loopback Host (e.g. a Tailscale Funnel hostname
+    // proxied to 127.0.0.1). This app installs hostHeaderGuard/originGuard for config.http.allowedHosts
+    // itself, so tell the SDK not to add its own. The listen address is still config.http.bind.
+    void host;
+    return createMcpExpressApp({ host: '0.0.0.0', jsonLimit: '16mb' });
   } finally {
     console.warn = original;
   }
