@@ -15,6 +15,14 @@ export const isTermux = fs.existsSync(path.join(termuxBin, 'termux-wake-lock'));
 
 export const homeDir = isTermux ? termuxHome : os.homedir();
 
+// The real Termux home (where Termux:Boot scripts, ~/.termux and user files live). homeDir above is
+// $PREFIX/home, which is NOT the Termux $HOME, so the default file jail denied the real home
+// (it sits under the denied /data/data). homeDir is kept as is so the shell environment
+// (HOME, default cwd, state dir) does not change; this path is only added to the file jail.
+export const termuxRealHome = isTermux
+  ? (process.env.TERMUX__HOME ?? path.join(path.dirname(termuxPrefix), 'home'))
+  : null;
+
 export const stateDir = process.env.TERMUX_MCP_STATE_DIR ?? path.join(homeDir, '.termux-mcp');
 export const jobsDir = path.join(stateDir, 'jobs');
 export const mediaDir = path.join(stateDir, 'media');

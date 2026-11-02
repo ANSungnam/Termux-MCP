@@ -276,8 +276,6 @@ export function registerShellTools(register) {
     async () => {
       const apiBinaries = [
         'termux-battery-status',
-        'termux-clipboard-get',
-        'termux-clipboard-set',
         'termux-camera-photo',
         'termux-location',
         'termux-microphone-record',

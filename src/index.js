@@ -12,6 +12,7 @@ import { audit } from './audit.js';
 import { createServer, SERVER_NAME } from './server.js';
 import { classifyAllowedHosts, describePolicy, hostHeaderGuard, originGuard } from './hostguard.js';
 import { ensureStateDirs, isTermux, termuxPrefix } from './paths.js';
+import { startPhoneToolSync } from './tools/phone.js';
 
 const VERSION = '0.1.0';
 
@@ -188,7 +189,12 @@ function createGuardedApp(host, allowedHosts) {
     original(...args);
   };
   try {
-    return createMcpExpressApp({ host, jsonLimit: '16mb' });
+    // The SDK picks its own Host check from `host`: for a loopback host it installs a localhost-only
+    // check, which would reject every allowed non-loopback Host (e.g. a Tailscale Funnel hostname
+    // proxied to 127.0.0.1). This app installs hostHeaderGuard/originGuard for config.http.allowedHosts
+    // itself, so tell the SDK not to add its own. The listen address is still config.http.bind.
+    void host;
+    return createMcpExpressApp({ host: '0.0.0.0', jsonLimit: '16mb' });
   } finally {
     console.warn = original;
   }
@@ -206,6 +212,7 @@ function startHttp(config) {
         jsonLimit: '16mb',
       });
 
+  app.use((q, s, n) => { const t = Date.now(); s.on('finish', () => { import('node:fs').then((f) => f.appendFileSync(process.env.HOME + '/.termux-mcp/access.log', new Date(Date.now() + 9 * 3600000).toISOString().replace('Z', '+09:00') + ' ' + q.method + ' ' + q.url + ' ' + s.statusCode + ' ' + (Date.now() - t) + 'ms host=' + q.headers.host + ' ip=' + (q.headers['x-forwarded-for'] || q.socket.remoteAddress) + '\n')).catch((e) => process.stderr.write(`${new Date(Date.now() + 9 * 3600000).toISOString().replace('Z', '+09:00')} 실패: access.log 기록 실패 사유: ${e?.code ?? ''} ${e?.message ?? e}\n`)); }); n(); });
   if (policy.needsCustomGuard) {
     app.use(hostHeaderGuard(config.http.allowedHosts));
     app.use(originGuard(config.http.allowedHosts));
@@ -241,6 +248,7 @@ function startHttp(config) {
       .join(' ');
     const reachable = isWildcardHost(config.http.bind) ? addresses : [config.http.bind];
 
+    process.stderr.write(`${new Date(Date.now() + 9 * 3600000).toISOString().replace('Z', '+09:00')} 성공: 서버 시작 - 포트 ${port} 열림 (pid ${process.pid})\n`);
     process.stderr.write(
       `termux-mcp ${VERSION} listening on http://${config.http.bind}:${port}${config.http.path}\n` +
         `  health: http://${config.http.bind}:${port}/health\n` +
@@ -277,10 +285,12 @@ function startHttp(config) {
     process.stderr.write(
       `termux-mcp: cannot listen on ${config.http.bind}:${config.http.port}: ${error.message}${hint}\n`,
     );
+    process.stderr.write(`${new Date(Date.now() + 9 * 3600000).toISOString().replace('Z', '+09:00')} 실패: 서버 시작 실패 - 포트 ${config.http.port} 사유: ${error.code ?? ''} ${error.message}\n`);
     process.exitCode = 1;
   });
 
   const shutdown = () => {
+    process.stderr.write(`${new Date(Date.now() + 9 * 3600000).toISOString().replace('Z', '+09:00')} 종료 신호 받음 -> 정상 종료 진행\n`);
     server.close(() => {
       void handler.close().finally(() => process.exit(0));
     });
@@ -331,6 +341,8 @@ export async function main(argv) {
   if (Number.isInteger(options.port) && options.port > 0) config.http.port = options.port;
   if (options.httpPath) config.http.path = options.httpPath;
 
+  if (process.env.SPC_DISABLE !== '1') startPhoneToolSync();
+
   if (options.mode === 'http') {
     if (!config.http.enabled) {
       process.stderr.write(
@@ -363,6 +375,9 @@ const invokedDirectly =
   process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href;
 
 if (invokedDirectly) {
+  process.on('unhandledRejection', (r) => { process.stderr.write(`${new Date(Date.now() + 9 * 3600000).toISOString().replace('Z', '+09:00')} 실패: 처리 안 된 오류(unhandledRejection) 사유: ${r?.stack ?? r}\n`); process.exit(1); });
+  process.on('uncaughtException', (e) => { process.stderr.write(`${new Date(Date.now() + 9 * 3600000).toISOString().replace('Z', '+09:00')} 실패: 예기치 못한 오류(uncaughtException) 사유: ${e?.stack ?? e}\n`); process.exit(1); });
+  process.on('exit', (c) => { process.stderr.write(`${new Date(Date.now() + 9 * 3600000).toISOString().replace('Z', '+09:00')} 서버 종료 (exit code ${c}${c === 0 ? ', 정상 종료' : ', 실패 종료'})\n`); });
   main(process.argv.slice(2)).catch((error) => {
     process.stderr.write(`termux-mcp: ${error.message}\n`);
     process.exit(1);

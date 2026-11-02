@@ -3,7 +3,8 @@ import path from 'node:path';
 import * as z from 'zod/v4';
 import { run } from '../exec.js';
 import { assertCommandAllowed, assertPath } from '../policy.js';
-import { mediaDir, termuxBinary } from '../paths.js';
+import { isTermux, mediaDir, termuxBinary } from '../paths.js';
+import { callPhoneTool } from './phone.js';
 import { describeError, errorResult, imageResult, json, text } from '../result.js';
 
 const DEFAULT_TIMEOUT_MS = 15000;
@@ -118,6 +119,12 @@ export function registerApiTools(register) {
             `refused: ${args.binary} is on this server's denylist. Use a dedicated tool, or edit config.api.deny.`,
           );
         }
+        if (/^termux-clipboard-(get|set)$/.test(args.binary)) {
+          return errorResult(
+            'refused: Termux 클립보드는 쓰지 않는다(안드로이드가 뒤에서 읽기를 막아 빈 값). ' +
+              '읽기는 phone_get_clipboard, 쓰기는 phone_set_clipboard를 쓴다.',
+          );
+        }
         assertCommandAllowed([args.binary, ...(args.args ?? [])], args.confirm === true);
         const result = await apiCommand(args.binary, args.args, {
           config,
@@ -147,42 +154,9 @@ export function registerApiTools(register) {
     },
   );
 
-  register(
-    'clipboard_get',
-    {
-      title: 'Read the clipboard',
-      description: 'Return the current Android clipboard text.',
-      annotations: { readOnlyHint: true, openWorldHint: true },
-      inputSchema: z.object({}),
-    },
-    async (_args, { config }) => {
-      try {
-        return text((await apiCommand('termux-clipboard-get', [], { config })).stdout);
-      } catch (error) {
-        return errorResult(describeError(error));
-      }
-    },
-  );
-
-  register(
-    'clipboard_set',
-    {
-      title: 'Write the clipboard',
-      description: 'Put text on the Android clipboard so it can be pasted into any app.',
-      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
-      inputSchema: z.object({ text: z.string() }),
-    },
-    async (args, { config }) => {
-      try {
-        const result = await apiCommand('termux-clipboard-set', [args.text], { config });
-        return result.exitCode === 0
-          ? json({ set: true, length: args.text.length })
-          : apiResult(result, { raw: true });
-      } catch (error) {
-        return errorResult(describeError(error));
-      }
-    },
-  );
+  // 2026-10-30: clipboard_get / clipboard_set 제거.
+  // 안드로이드 10+는 뒤에서 도는 Termux의 클립보드 읽기를 막아 빈 값만 돌려줬다(실측: 빈 값, 0.8~1.3초).
+  // 클립보드는 Sunny Phone Control의 phone_get_clipboard / phone_set_clipboard만 쓴다(실측: 정상, 약 0.1초).
 
   register(
     'toast',
@@ -309,12 +283,25 @@ export function registerApiTools(register) {
       title: 'Take a screenshot',
       description:
         'Capture the screen to a PNG in the server media directory. Set include_image to get the picture inline. ' +
-        'Needs the termux-api package; on some devices termux-screenshot is not available.',
+        'Uses termux-screenshot when present, otherwise the Sunny Phone Control app (low-resolution JPEG).',
       annotations: { readOnlyHint: true, openWorldHint: false },
       inputSchema: z.object({ include_image: z.boolean().optional() }),
     },
     async (args, { config }) => {
       try {
+        if (isTermux && !termuxBinary('termux-screenshot')) {
+          // termux-api ships no termux-screenshot on most devices; capture through Sunny Phone Control
+          // (accessibility screenshot) instead and keep this tool's contract: a file in the media dir.
+          const shot = await callPhoneTool('get_screen_state', { include_screenshot: true, annotate: false });
+          const image = shot.content?.find((block) => block.type === 'image');
+          if (shot.isError || !image) {
+            const why = shot.content?.map((block) => block.text).filter(Boolean).join(' ') || 'no image returned';
+            return errorResult(`termux-screenshot is not installed and the Sunny Phone Control fallback failed: ${why}`);
+          }
+          const jpg = nextMediaPath('screenshot', 'jpg');
+          fs.writeFileSync(jpg, Buffer.from(image.data, 'base64'), { mode: 0o600 });
+          return deliverMedia(jpg, { includeImage: args.include_image === true, config });
+        }
         const target = nextMediaPath('screenshot', 'png');
         const result = await apiCommand('termux-screenshot', ['-o', target], { config, timeoutMs: 20000 });
         if (result.exitCode !== 0) return apiResult(result, { raw: true });
